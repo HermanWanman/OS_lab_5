@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 199309L
 #include <pthread.h> 
 #include <stdio.h>
 #include <fcntl.h> 
@@ -27,9 +28,15 @@ typedef struct {
 } ThreadArgs;
 
 // Constructor for the inputs of the thread function
-ThreadArgs initThreadArgs(request_t *in_list_for_thread, size_t size_of_inlist, char *file_path, char *text_buffer, int fd){
-     ThreadArgs ta = { .file_path = file_path, .in_list_for_thread = in_list_for_thread, size_of_inlist = size_of_inlist, .fd = fd};
-     return ta;
+ThreadArgs initThreadArgs(request_t *in_list_for_thread, size_t size_of_inlist, char *file_path, char *text_buffer, int fd) {
+    ThreadArgs ta = {
+        .in_list_for_thread = in_list_for_thread,
+        .size_of_inlist = size_of_inlist,
+        .file_path = file_path,
+        .text_buffer = text_buffer,
+        .fd = fd
+    };
+    return ta;
 }
 
 // @ in_list_for_thread[] is a list of structs that store the offset and amount of bytes to read
@@ -68,7 +75,7 @@ void *reader_thread_func(void *arg) {
 
 
 void *writer_thread_func(void *arg) { 
-     printf("vi började");
+     //printf("vi började");
      //Cast void-pointer to ThreadArgs-pointer, input needs to be void *arg for pthread_create
      ThreadArgs *ta = (ThreadArgs *)arg;
      
@@ -86,7 +93,7 @@ void *writer_thread_func(void *arg) {
      }
      
      
-     printf("vi blev klara");
+     //printf("vi blev klara");
      pthread_exit(0);
      return NULL; // won't happen because pthread_exit will terminate the thread
 }
@@ -94,59 +101,48 @@ void *writer_thread_func(void *arg) {
 // Takes the list and all relevant inputs, runs the writers and waits for them to finish
 void run_writers(request_t *list, int n, int p, char *file_path, char *text_buffer, int fd){
      pthread_t thread_ids[p];
-     size_t block_size = n/p;
+     size_t block_size = NUM_REQUESTS/p;
      ThreadArgs ta;
-     void *status = NULL;
-
-     for (int i = 0; i < p; i++)
-     {    
-
-          ta = initThreadArgs(list+(block_size*i), block_size, file_path, text_buffer, fd);
-
-          if (pthread_create(&thread_ids[i], NULL, writer_thread_func, &ta) != 0){
+     ThreadArgs *thread_args = malloc(sizeof(ThreadArgs) * p);
+     for (int i = 0; i < p; i++) {
+          thread_args[i] = initThreadArgs(list+(block_size*i), block_size, file_path, text_buffer, fd);
+          if (pthread_create(&thread_ids[i], NULL, writer_thread_func, &thread_args[i]) != 0) {
                perror("Error creating thread");
                exit(EXIT_FAILURE);
           }
-          
      }
 
-     for (int i = 0; i < p; i++)
-     {
-          if (pthread_join(thread_ids[i], &status) != 0) {  /*problem sitter här, vet inte varför*/
-               printf("Error joining thread in writers, status %ld", (long)status);
+     for (int i = 0; i < p; i++) {
+          if (pthread_join(thread_ids[i], NULL) != 0) {
+               perror("Error joining thread");
                exit(EXIT_FAILURE);
           }
-          printf("we made it\n");
      }
-     
-
-     return;  
+free(thread_args);
+  
 }
 
 // Takes the list and all relevant inputs and runs the readers
 void run_readers(request_t *list, int n, int p, char *file_path, char *text_buffer, int fd){
      pthread_t thread_ids[p];
-     size_t block_size = n/p;
-     ThreadArgs ta;
-     void *status;
-     for (int i = 0; i < p; i++)
-     {
-          ta = initThreadArgs(list+(block_size*i), block_size, file_path, text_buffer, fd);
-          thread_ids[i] = (pthread_t)i;
-          if (pthread_create(&thread_ids[i], NULL, reader_thread_func, &ta) != 0){
+     size_t block_size = NUM_REQUESTS/p;
+     ThreadArgs *thread_args = malloc(sizeof(ThreadArgs) * p);
+     for (int i = 0; i < p; i++) {
+          thread_args[i] = initThreadArgs(list+(block_size*i), block_size, file_path, text_buffer, fd);
+          if (pthread_create(&thread_ids[i], NULL, reader_thread_func, &thread_args[i]) != 0) {
                perror("Error creating thread");
                exit(EXIT_FAILURE);
           }
      }
 
-     for (int i = 0; i < p; i++)
-     {
-          if (pthread_join(thread_ids[i], &status) != 0) {
-               printf("Error joining thread in readers, status %ld", (long)status);
-               return exit(EXIT_FAILURE);
+     for (int i = 0; i < p; i++) {
+          if (pthread_join(thread_ids[i], NULL) != 0) {
+               perror("Error joining thread");
+               exit(EXIT_FAILURE);
           }
      }
-     return;
+     free(thread_args);
+
 }
 
 int main(int argc, char *argv[])
@@ -162,14 +158,14 @@ int main(int argc, char *argv[])
           exit(EXIT_FAILURE);
      }
      
-     printf("open/create file\n");
+     //printf("open/create file\n");
      // @allocate a buffer and initialize it with 1 extra spot for the Null-terminator
      char* ptr = (char*)calloc(n+1, sizeof(char));
      if (ptr == NULL){
           perror("Memory allocation in ptr failed, canceling code");
           exit(EXIT_FAILURE);
      }
-     printf("buffer created, ptr = %d\n", *ptr);
+     //printf("buffer created, ptr = %p\n", (void*)ptr);     
      // @create two lists of 100 requests in the format of [offset, bytes]
 
      // @List 1: sequtial requests of 16384 bytes, where offset_n = offset_(n-1) + 16384
@@ -186,7 +182,13 @@ int main(int argc, char *argv[])
           list1[i].offset = i * REQUEST_SIZE;
           list1[i].bytes = REQUEST_SIZE;
      }
-     printf("list1 initialized\n");
+     //printf("list1 initialized\n");
+
+     // Print List 1 for debugging
+     /*printf("List 1 contents:\n");
+     for (int i = 0; i < NUM_REQUESTS; i++) {
+         printf("Request %d: offset = %ld, bytes = %zu\n", i, (long)list1[i].offset, list1[i].bytes);
+     }*/
 
      // @List 2: random requests of 128 bytes, where offset_n = random[0,N/4096] * 4096
      // @e.g., [4096, 128], [16384, 128], [32768, 128], etc.
@@ -216,79 +218,66 @@ int main(int argc, char *argv[])
           //if block is already used, loop again to find new block
      }
      free(used_blocks);
-     printf("list2 initialized\n");
+     //printf("list2 initialized\n");
 
-     // @start timing 
-     double start_time = (double)clock();
-     printf("clock started\n");
+     // Print List 2 for debugging
+     /*printf("List 2 contents:\n");
+     for (int i = 0; i < NUM_REQUESTS; i++) {
+         printf("Request %d: offset = %ld, bytes = %zu\n", i, (long)list2[i].offset, list2[i].bytes);
+     }*/
+
+     size_t total_bytes_list1 = NUM_REQUESTS * REQUEST_SIZE;
+     double MB_list1 = total_bytes_list1 / 1000000.0;
+
+     size_t total_bytes_list2 = NUM_REQUESTS * RANDOM_REQUEST_SIZE;
+     double MB_list2 = total_bytes_list2 / 1000000.0;
+
+      
+     struct timespec start_ts, end_ts;
+     double elapsed;
+     // @start timing
+     clock_gettime(CLOCK_MONOTONIC, &start_ts);
+
      /* Create writer workers and pass in their portion of list1. Then wait for them to finish */ 
      run_writers(list1, n, p, FILE_PATH, ptr, fd);
 
      // @close the file 
      close(fd);
-
      // @end timing 
-     double time = (double)clock() - start_time;
-
-     double MB = n/1000000;
+     clock_gettime(CLOCK_MONOTONIC, &end_ts);
+     elapsed = (end_ts.tv_sec - start_ts.tv_sec) + (end_ts.tv_nsec - start_ts.tv_nsec)/1000000000.0;
      //@Print out the write bandwidth
-     printf("Write %f MB, use %d threads, elapsed time %f s, write bandwidth: %f MB/s \n", MB, p, time, MB/time);
+     printf("List 1. Write %f MB, use %d threads, elapsed time %f s, write bandwidth: %f MB/s \n", MB_list1, p, elapsed, MB_list1/elapsed);
      
-     // @reopen the file 
+     
+     // List 1 Read
      fd = open(FILE_PATH, O_RDONLY);
-
-     // @start timing 
-     start_time = (double)clock();
-     /* Create reader workers and pass in their portion of list1. Then wait for them to finish */   
+     clock_gettime(CLOCK_MONOTONIC, &start_ts);
      run_readers(list1, n, p, FILE_PATH, ptr, fd);
-     
-
-     // @close the file 
      close(fd);
+     clock_gettime(CLOCK_MONOTONIC, &end_ts);
+     elapsed = (end_ts.tv_sec - start_ts.tv_sec) + (end_ts.tv_nsec - start_ts.tv_nsec)/1000000000.0;
+     printf("List 1. Read %f MB, use %d threads, elapsed time %f s, read bandwidth: %f MB/s \n", MB_list1, p, elapsed, MB_list1/elapsed);
 
-     // @end timing 
-
-     time = (double)clock() - start_time;
-     //@Print out the read bandwidth
-     printf("Read %f MB, use %d threads, elapsed time %f s, write bandwidth: %f MB/s \n", MB, p, time, MB/time);
-
-
-     // @Repeat the write and read test now using List2 
+     // List 2 Write
      fd = open(FILE_PATH, O_RDWR, 0666);
-     // @start timing 
-     start_time = (double)clock();
-
-     /* Create writer workers and pass in their portion of list1. Then wait for them to finish */ 
+     clock_gettime(CLOCK_MONOTONIC, &start_ts);
      run_writers(list2, n, p, FILE_PATH, ptr, fd);
-
-     // @close the file 
      close(fd);
+     clock_gettime(CLOCK_MONOTONIC, &end_ts);
+     elapsed = (end_ts.tv_sec - start_ts.tv_sec) + (end_ts.tv_nsec - start_ts.tv_nsec)/1000000000.0;
+     printf("List 2. Write %f MB, use %d threads, elapsed time %f s, write bandwidth: %f MB/s \n", MB_list2, p, elapsed, MB_list2/elapsed);
 
-     // @end timing 
-     time = (double)clock() - start_time;
-
-     
-     //@Print out the write bandwidth
-     printf("Write %f MB, use %d threads, elapsed time %f s, write bandwidth: %f MB/s \n", MB, p, time, MB/time);
-     
-     // @reopen the file 
+     // List 2 Read
      fd = open(FILE_PATH, O_RDONLY);
-
-     // @start timing 
-     start_time = (double)clock();
-     /* Create reader workers and pass in their portion of list1. Then wait for them to finish */   
+     clock_gettime(CLOCK_MONOTONIC, &start_ts);
      run_readers(list2, n, p, FILE_PATH, ptr, fd);
-     
-
-     // @close the file 
      close(fd);
-
-     // @end timing 
-
-     time = (double)clock() - start_time;
-     //@Print out the read bandwidth
-     printf("Read %f MB, use %d threads, elapsed time %f s, write bandwidth: %f MB/s \n", MB, p, time, MB/time);
-
+     clock_gettime(CLOCK_MONOTONIC, &end_ts);
+     elapsed = (end_ts.tv_sec - start_ts.tv_sec) + (end_ts.tv_nsec - start_ts.tv_nsec)/1000000000.0;
+     printf("List 2. Read %f MB, use %d threads, elapsed time %f s, read bandwidth: %f MB/s \n", MB_list2, p, elapsed, MB_list2/elapsed);
+     
+     
      /*free up resources properly */
      free(list1);
      free(list2);
